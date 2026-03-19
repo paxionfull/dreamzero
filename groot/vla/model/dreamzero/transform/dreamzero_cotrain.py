@@ -146,6 +146,9 @@ def collate(features: List[dict], tokenizer: AutoTokenizer, num_views=3, embodim
                         item = "A multi-view video shows that a robot " + str(item).lower() + " The video is split into four views: The top-left view shows the camera view from the robot's head, the top-right view shows the camera view from the right hand, the bottom-left view shows the camera view from the left hand, and the bottom-right view is a black screen (inactive view). The robot " + str(item).lower()
                     elif elem["embodiment_id"] == embodiment_tag_mapping[EmbodimentTag.YAM.value]:
                         item = "A multi-view video shows that a robot " + str(item).lower() + " The video is split into four views: The top-left view shows the top camera, the top-right view shows the right camera, the bottom-left view shows the left camera, and the bottom-right view is a black screen. The robot " + str(item).lower()
+                    elif elem["embodiment_id"] == embodiment_tag_mapping[EmbodimentTag.ROBOCHALLENGE.value]:
+                        # breakpoint()
+                        item = "A multi-view video shows that a robot " + str(item).lower() + " The video is split into three views: The top-left view shows the top exterior camera, the top-right view shows the camera from the robot's wrist, the bottom-left view shows the right exterior camera, and the bottom-right view is a black screen. The robot " + str(item).lower()
                     else:
                         raise ValueError(f"Embodiment ID {elem['embodiment_id']} not supported.")   
                     output_values.append(item)

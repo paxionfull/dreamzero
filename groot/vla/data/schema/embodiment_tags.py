@@ -346,3 +346,5 @@ class EmbodimentTag(Enum):
     """
     The Mecka robot with hands.
     """
+
+    ROBOCHALLENGE = "robochallenge"

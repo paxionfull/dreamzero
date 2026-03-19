@@ -640,6 +640,41 @@ class BaseExperiment(ABC):
                 f,
             )
 
+        # ======================== Dataset ========================
+        # Create the train dataset.
+        # Dump the metadata; necessary for policy to normalize the input and unnormalize the output
+        train_dataset = self.create_train_dataset(cfg)
+        print("Using dataset:")
+        print(train_dataset)
+        assert (
+            train_dataset.merged_metadata is not None
+        ), "You must set metadata_config.merge=true in order to save the metadata."
+
+        metadata_save_path = exp_cfg_dir / "metadata.json"
+        U.json_dump(
+            {k: v.model_dump(mode="json") for k, v in train_dataset.merged_metadata.items()},
+            metadata_save_path,
+            indent=4,
+        )
+        print("Successfully dumped metadata")
+
+        val_dataset = self.create_val_dataset(cfg)
+        data_collator = self.create_data_collator(cfg)
+        # ======================== Dataset ========================
+
+        # from torch.utils.data import DataLoader
+        # dl = DataLoader(
+        #     train_dataset,
+        #     batch_size=1,
+        #     num_workers=0,           # 调试建议先用 0，方便看报错/print
+        #     pin_memory=False,
+        # )
+        # gn = iter(dl)
+        # batch = next(gn)
+        # from IPython import embed; embed()
+        # exit(0)
+
+        # ======================== Model ========================
         # Check if we are resuming training.
         resume_path, continue_training = get_checkpoint_path(training_args.output_dir)
         if not continue_training:
@@ -660,26 +695,9 @@ class BaseExperiment(ABC):
 
         # Make sure model_dtype and training_args dtype are compatible.
         compute_dtype = dtype_from_string(model.config.model_dtype)
+        # ======================== Model ========================
 
-        # Create the train dataset.
-        # Dump the metadata; necessary for policy to normalize the input and unnormalize the output
-        train_dataset = self.create_train_dataset(cfg, model)
-        print("Using dataset:")
-        print(train_dataset)
-        assert (
-            train_dataset.merged_metadata is not None
-        ), "You must set metadata_config.merge=true in order to save the metadata."
-
-        metadata_save_path = exp_cfg_dir / "metadata.json"
-        U.json_dump(
-            {k: v.model_dump(mode="json") for k, v in train_dataset.merged_metadata.items()},
-            metadata_save_path,
-            indent=4,
-        )
-        print("Successfully dumped metadata")
-
-        val_dataset = self.create_val_dataset(cfg, model)
-        data_collator = self.create_data_collator(cfg, model)
+        # ======================== Trainer ========================
         trainer = self.create_trainer(
             cfg=cfg,
             exp_cfg_dir=exp_cfg_dir,
@@ -690,6 +708,8 @@ class BaseExperiment(ABC):
             data_collator=data_collator,
             compute_dtype=compute_dtype,
         )
+        # ======================== Trainer ========================
+
         self.cfg = cfg
         self.exp_cfg_dir = exp_cfg_dir
         self.training_args = training_args
@@ -698,7 +718,11 @@ class BaseExperiment(ABC):
         self.trainer = trainer
 
     def create_model(self, cfg, training_args):
+        import time
+        t0 = time.perf_counter()
         model = instantiate(cfg.model)
+        t1 = time.perf_counter()
+        print(f"[create_model] instantiate(cfg.model) 耗时 {t1 - t0:.2f} 秒")
 
         if cfg.pretrained_model_path is not None:
             mprint(f"Loading pretrained weights from: {cfg.pretrained_model_path}")
@@ -739,15 +763,15 @@ class BaseExperiment(ABC):
         mprint(f"{model}\n")
         return model
 
-    def create_train_dataset(self, cfg, model):
+    def create_train_dataset(self, cfg):
         assert torch.distributed.is_initialized()
         train_dataset = instantiate(cfg.train_dataset)
         return train_dataset
 
-    def create_val_dataset(self, cfg, model):
+    def create_val_dataset(self, cfg):
         return None
 
-    def create_data_collator(self, cfg, model):
+    def create_data_collator(self, cfg):
         return instantiate(cfg.data_collator)
 
     def create_trainer(

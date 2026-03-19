@@ -458,6 +458,16 @@ class ShardedLeRobotSubLangSingleActionChunkDatasetDROID(LeRobotSingleDataset):
         # Optional logging to avoid stdout overhead during tight loops
         # (controlled by instance-level verbose flag)
         # Using a staticmethod, we cannot read self.verbose; defer to caller to control prints
+
+        # NOTE：高版本的lerobot数据集，需要额外加载task.jsonl
+        import os
+        task_file = os.path.join("/".join(parquet_paths[0].as_posix().split("/")[:-3]), "meta", "tasks.jsonl")
+        tasks_info = None
+        if os.path.exists(task_file):
+            with open(task_file, "r") as f: 
+                tasks_info = [json.loads(line) for line in f]
+            tasks_info = {item["task_index"]: item["task"] for item in tasks_info}
+
         print("Caching shard")
         start_time = time.time()
         assert "video" in modality_keys, "No video modality found. No need to use caching."
@@ -481,14 +491,46 @@ class ShardedLeRobotSubLangSingleActionChunkDatasetDROID(LeRobotSingleDataset):
                 assert key.startswith("video."), f"Video key must start with 'video.', got {key}"
                 if key not in cached_frames:
                     cached_frames[key] = []
-                frames = get_frames_by_timestamps(
-                    video_paths[trajectory_id][key].as_posix(),
-                    timestamps=parquet_timestamps,
-                    video_backend=video_backend,
-                    video_backend_kwargs=video_backend_kwargs,
-                    fps=fps,
-                )
-                cached_frames[key].append(frames)
+                try:
+                    frames = get_frames_by_timestamps(
+                        video_paths[trajectory_id][key].as_posix(),
+                        timestamps=parquet_timestamps,
+                        video_backend=video_backend,
+                        video_backend_kwargs=video_backend_kwargs,
+                        fps=fps,
+                    )
+                    cached_frames[key].append(frames)
+                except Exception:
+                    # 回退路径：从 parquet 中的 PNG bytes 解码并缓存
+                    # print("直接从parquet中读取帧")
+                    frame_key = video_paths[trajectory_id][key].as_posix().split("/")[-2]
+
+                    import io
+                    import cv2
+                    from concurrent.futures import ThreadPoolExecutor
+
+                    def decode_png_bytes(sample):
+                        data = sample["bytes"]
+                        arr = np.frombuffer(data, dtype=np.uint8)
+                        img_bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+                        img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+                        return img  # HWC, uint8
+
+                    def convert_task_index_to_task(task_index):
+                        if tasks_info is not None:
+                            return tasks_info[int(task_index)]
+                        return None
+
+                    samples = parquet_df[frame_key].to_list()
+                    with ThreadPoolExecutor(max_workers=16) as ex:
+                        decoded = list(ex.map(decode_png_bytes, samples))
+                        if "task" not in parquet_df.columns and tasks_info is not None:
+                            parquet_df["task"] = parquet_df["task_index"].map(convert_task_index_to_task)
+                    frames_np = np.stack(decoded, axis=0)  # THWC
+                    cached_frames[key].append(frames_np)
+
+                    parquet_df.drop(columns=[frame_key], inplace=True)
+                    
             if cached_df is None:
                 cached_df = parquet_df
             else:

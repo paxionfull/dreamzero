@@ -218,6 +218,7 @@ def test_ar_droid_policy_server(
     import uuid
     session_id = str(uuid.uuid4())
     logging.info(f"Session ID: {session_id}")
+    infer_times: list[float] = []
 
     # ── Zero-image fallback mode ──────────────────────────────────────
     if use_zero_images:
@@ -228,10 +229,14 @@ def test_ar_droid_policy_server(
             t0 = time.time()
             actions = client.infer(obs)
             dt = time.time() - t0
+            infer_times.append(dt)
             _log_action(actions, dt)
 
         logging.info("Sending reset...")
         client.reset({})
+        if infer_times:
+            avg_dt = sum(infer_times) / len(infer_times)
+            logging.info(f"Average infer time over {len(infer_times)} calls: {avg_dt:.2f}s")
         logging.info("Done (zero-image mode).")
         return
 
@@ -265,11 +270,15 @@ def test_ar_droid_policy_server(
         t0 = time.time()
         actions = client.infer(obs)
         dt = time.time() - t0
+        infer_times.append(dt)
         _log_action(actions, dt)
 
     # Reset triggers video save on the server
     logging.info("Sending reset to save video...")
     client.reset({})
+    if infer_times:
+        avg_dt = sum(infer_times) / len(infer_times)
+        logging.info(f"Average infer time over {len(infer_times)} calls: {avg_dt:.2f}s")
 
     logging.info("Done.")
 
