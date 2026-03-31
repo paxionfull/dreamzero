@@ -464,7 +464,7 @@ class ShardedLeRobotSubLangSingleActionChunkDatasetDROID(LeRobotSingleDataset):
         task_file = os.path.join("/".join(parquet_paths[0].as_posix().split("/")[:-3]), "meta", "tasks.jsonl")
         tasks_info = None
         if os.path.exists(task_file):
-            with open(task_file, "r") as f: 
+            with open(task_file, "r") as f:
                 tasks_info = [json.loads(line) for line in f]
             tasks_info = {item["task_index"]: item["task"] for item in tasks_info}
 
@@ -491,7 +491,8 @@ class ShardedLeRobotSubLangSingleActionChunkDatasetDROID(LeRobotSingleDataset):
                 assert key.startswith("video."), f"Video key must start with 'video.', got {key}"
                 if key not in cached_frames:
                     cached_frames[key] = []
-                try:
+                # try:
+                if False:  # TODO
                     frames = get_frames_by_timestamps(
                         video_paths[trajectory_id][key].as_posix(),
                         timestamps=parquet_timestamps,
@@ -500,7 +501,8 @@ class ShardedLeRobotSubLangSingleActionChunkDatasetDROID(LeRobotSingleDataset):
                         fps=fps,
                     )
                     cached_frames[key].append(frames)
-                except Exception:
+                # except Exception:
+                else:
                     # 回退路径：从 parquet 中的 PNG bytes 解码并缓存
                     # print("直接从parquet中读取帧")
                     frame_key = video_paths[trajectory_id][key].as_posix().split("/")[-2]
@@ -530,7 +532,7 @@ class ShardedLeRobotSubLangSingleActionChunkDatasetDROID(LeRobotSingleDataset):
                     cached_frames[key].append(frames_np)
 
                     parquet_df.drop(columns=[frame_key], inplace=True)
-                    
+
             if cached_df is None:
                 cached_df = parquet_df
             else:
@@ -636,7 +638,7 @@ class ShardedLeRobotSubLangSingleActionChunkDatasetDROID(LeRobotSingleDataset):
         # Get the trajectory index
         trajectory_index = self.get_trajectory_index(trajectory_id)
         trajectory_length = self.trajectory_lengths[trajectory_index]
-        
+
         # Get trajectory data to access language annotations (reuse if already loaded)
         # traj_data = (
         #     self.curr_traj_data
@@ -645,7 +647,7 @@ class ShardedLeRobotSubLangSingleActionChunkDatasetDROID(LeRobotSingleDataset):
         # )
         traj_data = self.get_trajectory_data(trajectory_id)
         # print("trajectory id", trajectory_id, step_indices, trajectory_index)
-        
+
         # Get language annotations for all steps in the trajectory
         # language_key = self.language_key
         for modality in self.modality_keys:
@@ -670,17 +672,17 @@ class ShardedLeRobotSubLangSingleActionChunkDatasetDROID(LeRobotSingleDataset):
             ), "Shard not cached. Please call `cache_next_shard` and `use_next_shard` first."
             indices_in_shard = self.shard_start_indices[trajectory_id] + step_indices
             return self.cached_shard[key][indices_in_shard]
-        
+
         # Find language-consistent ranges and uniformly sample from them
         sampled_indices = self._uniform_sample_from_language_ranges(
             step_indices, language_annotations, trajectory_length
         )
-        
+
         # Ensure the sampled indices are within the valid range
         sampled_indices = np.maximum(sampled_indices, 0)
         sampled_indices = np.minimum(sampled_indices, trajectory_length - 1)
         # print("sampled indices", sampled_indices)
-        
+
         # Calculate the absolute indices
         assert (
             self.shard_start_indices is not None
@@ -824,14 +826,14 @@ class ShardedLeRobotSubLangSingleActionChunkDatasetDROID(LeRobotSingleDataset):
             language_annotations = traj_data[language_key].values
             first_idx = max(0, min(int(step_indices[0]), trajectory_length - 1))
             target_language = language_annotations[first_idx]
-            
+
             # Get the number of chunks from video sampling to ensure alignment
             target_num_chunks = None
             # if first_idx in self._current_num_chunks:
             if hasattr(self, '_current_num_chunks') and first_idx in self._current_num_chunks:
                 target_num_chunks = self._current_num_chunks[first_idx]
                 # print(f"State: Using target_num_chunks from video: {target_num_chunks}")
-            
+
             max_frames = self.max_chunk_size  # 16 anchors to align with 16 chunks as video/action
             sampled_list: list[int] = []
 
@@ -857,7 +859,7 @@ class ShardedLeRobotSubLangSingleActionChunkDatasetDROID(LeRobotSingleDataset):
                 # Stop if we've reached the target number of chunks
                 if target_num_chunks is not None and len(sampled_list) >= target_num_chunks:
                     break
-                    
+
                 if not back_done:
                     back_anchor = first_idx - 24 * step
                     if back_anchor < 0:
@@ -886,7 +888,7 @@ class ShardedLeRobotSubLangSingleActionChunkDatasetDROID(LeRobotSingleDataset):
             # Fallback: use provided indices with bounds
             sampled_indices = np.maximum(step_indices, 0)
             sampled_indices = np.minimum(sampled_indices, trajectory_length - 1)
-        
+
         # print("sampled indices for state", sampled_indices)
 
         # Pad the data using the computed sampled indices
@@ -993,14 +995,14 @@ class ShardedLeRobotSubLangSingleActionChunkDatasetDROID(LeRobotSingleDataset):
             language_annotations = traj_data[language_key].values
             first_idx = max(0, min(int(step_indices[0]), trajectory_length - 1))
             target_language = language_annotations[first_idx]
-            
+
             # Get the number of chunks from video sampling to ensure alignment
             target_num_chunks = None
             # if first_idx in self._current_num_chunks:
             if hasattr(self, '_current_num_chunks') and first_idx in self._current_num_chunks:
                 target_num_chunks = self._current_num_chunks[first_idx]
                 # print(f"Using target_num_chunks from video: {target_num_chunks}")
-            
+
             max_frames = 24 * self.max_chunk_size
             per_step_offsets = list(range(24))  # 0..23
             sampled_list: list[int] = []
@@ -1031,7 +1033,7 @@ class ShardedLeRobotSubLangSingleActionChunkDatasetDROID(LeRobotSingleDataset):
                 # Stop if we've reached the target number of chunks
                 if target_num_chunks is not None and len(sampled_list) // 24 >= target_num_chunks:
                     break
-                    
+
                 if not back_done:
                     back_anchor = first_idx - 24 * step
                     if back_anchor < 0:
@@ -1064,7 +1066,7 @@ class ShardedLeRobotSubLangSingleActionChunkDatasetDROID(LeRobotSingleDataset):
             # Fallback: use provided indices with bounds
             sampled_indices = np.maximum(step_indices, 0)
             sampled_indices = np.minimum(sampled_indices, trajectory_length - 1)
-        
+
         # print("sampled indices for action", first_idx, sampled_indices, trajectory_length)
 
         # Pad the data using the computed sampled indices
@@ -1079,7 +1081,7 @@ class ShardedLeRobotSubLangSingleActionChunkDatasetDROID(LeRobotSingleDataset):
         # Only apply to keys that are in relative_action_keys
         subkey = key.replace("action.", "")
         should_convert_to_relative = (
-            (self.relative_action or self.relative_action_per_horizon)  
+            (self.relative_action or self.relative_action_per_horizon)
             and len(sampled_indices) > 0
             and (self.relative_action_keys is None or subkey in self.relative_action_keys)
         )
@@ -1093,9 +1095,9 @@ class ShardedLeRobotSubLangSingleActionChunkDatasetDROID(LeRobotSingleDataset):
                 chunk_size=24,
             )
             # print("action data after convert", action_data[0], action_data[-1], key)
-        
+
         return action_data
-    
+
     def _convert_to_relative_action(
         self,
         action_data: np.ndarray,
@@ -1105,94 +1107,94 @@ class ShardedLeRobotSubLangSingleActionChunkDatasetDROID(LeRobotSingleDataset):
         chunk_size: int = 24,
     ) -> np.ndarray:
         """Convert absolute action to relative action by subtracting reference state.
-        
+
         Args:
             action_data: Absolute action data, shape (T, D)
             action_key: The action key (e.g., 'action.left_arm_joints')
             sampled_indices: The sampled indices for the action
             trajectory_id: The trajectory ID
             chunk_size: Size of each action chunk (default 24)
-            
+
         Returns:
             np.ndarray: Relative action data, shape (T, D)
         """
         # Get corresponding state key (assume state key matches action key)
         state_key = action_key.replace("action.", "state.")
         subkey = action_key.replace("action.", "")
-        
+
         # Get state data from trajectory
         traj_data = self.get_trajectory_data(trajectory_id)
         le_state_cfg = getattr(self.lerobot_modality_meta, "state", None)
-        
+
         if le_state_cfg is None or subkey not in le_state_cfg:
             # If no corresponding state key, return original action data
             return action_data
-        
+
         le_state_key = le_state_cfg[subkey].original_key
         if le_state_key is None:
             le_state_key = subkey
-        
+
         if le_state_key not in traj_data.columns:
             # If state column doesn't exist, return original action data
             return action_data
-        
+
         # Get state data array
         state_array: np.ndarray = np.stack(traj_data[le_state_key])
         if state_array.ndim == 1:
             state_array = state_array.reshape(-1, 1)
-        
+
         # Apply same indices as action
         le_indices = np.arange(
             le_state_cfg[subkey].start,
             le_state_cfg[subkey].end,
         )
         state_array = state_array[:, le_indices]
-        
+
         # Calculate relative action for each chunk
         relative_action_data = action_data.copy()
         num_chunks = len(sampled_indices) // chunk_size
-        
+
         for chunk_idx in range(num_chunks):
             chunk_start = chunk_idx * chunk_size
             chunk_end = chunk_start + chunk_size
-            
+
             # Get anchor index (first index of the chunk)
             anchor_idx = sampled_indices[chunk_start]
-            
+
             # Get reference state at anchor index
             if anchor_idx < len(state_array):
                 reference_state = state_array[anchor_idx]
-                
+
                 # Subtract reference state from all actions in this chunk
                 relative_action_data[chunk_start:chunk_end] = (
                     action_data[chunk_start:chunk_end] - reference_state
                 )
-        
+
         return relative_action_data
-    
+
     def _uniform_sample_from_language_ranges(
-        self, 
-        step_indices: np.ndarray, 
-        language_annotations: np.ndarray, 
+        self,
+        step_indices: np.ndarray,
+        language_annotations: np.ndarray,
         trajectory_length: int
     ) -> np.ndarray:
         """Uniformly sample from language-consistent ranges based on the first index's language.
-        
+
         Args:
             step_indices (np.ndarray): Original step indices to sample.
             language_annotations (np.ndarray): Language annotations for each step in the trajectory.
             trajectory_length (int): Total length of the trajectory.
-            
+
         Returns:
             np.ndarray: New indices sampled uniformly from the language-consistent range of the first index.
         """
         if len(step_indices) == 0:
             return np.array([])
-        
+
         # Use only the first index to determine the target language
         first_idx = max(0, min(step_indices[0], trajectory_length - 1))
         target_language = language_annotations[first_idx]
-        
+
         # Build sampled indices by moving in ±32-frame steps from first_idx
         # and adding 4 frames at 8-frame strides for each step, while:
         # - staying within trajectory bounds,
@@ -1201,7 +1203,7 @@ class ShardedLeRobotSubLangSingleActionChunkDatasetDROID(LeRobotSingleDataset):
         max_frames = 8 * self.max_chunk_size + 1
         per_step_offsets = [0, 3, 6, 9, 12, 15, 18, 21]
         sampled_list: list[int] = []
-        
+
         def add_step_set(anchor_index: int) -> None:
             # Only add a complete 4-frame set if it fully fits and capacity allows
             # Require full 32-frame window to exist for alignment with action/state
@@ -1213,10 +1215,10 @@ class ShardedLeRobotSubLangSingleActionChunkDatasetDROID(LeRobotSingleDataset):
             for offset in per_step_offsets:
                 idx = anchor_index + offset
                 sampled_list.append(int(idx))
-        
+
         # Always include the set at the first_idx
         add_step_set(first_idx)
-        
+
         # Expand outward in both directions in 32-frame steps
         step = 1
         back_done = False
@@ -1243,7 +1245,7 @@ class ShardedLeRobotSubLangSingleActionChunkDatasetDROID(LeRobotSingleDataset):
                 else:
                     add_step_set(fwd_anchor)
             step += 1
-        
+
         # De-duplicate and sort ascending for stable ordering
         if len(sampled_list) == 0:
             return np.array([])
@@ -1251,13 +1253,13 @@ class ShardedLeRobotSubLangSingleActionChunkDatasetDROID(LeRobotSingleDataset):
         # Ensure we return at most 81 frames
         if unique_sorted.size > max_frames:
             unique_sorted = unique_sorted[:max_frames]
-        
+
         # Convert to 4n+1 format by adding one more frame at the end with 8-frame stride
         if unique_sorted.size > 0:
             # Get the last index and add one more frame with 8-frame stride
             last_idx = unique_sorted[-1]
             additional_idx = last_idx + 3
-            
+
             # Only add if it doesn't exceed trajectory bounds and max_frames
             if additional_idx < trajectory_length and unique_sorted.size < max_frames:
                 unique_sorted = np.append(unique_sorted, additional_idx)
@@ -1267,17 +1269,17 @@ class ShardedLeRobotSubLangSingleActionChunkDatasetDROID(LeRobotSingleDataset):
                 if unique_sorted.size <= 8:
                     return np.array([])
                 unique_sorted = unique_sorted[:-7]
-        
+
         # ensure that unique_sorted has 4n+1 frames
         assert unique_sorted.size % 8 == 1, f"unique_sorted size {unique_sorted.size} is not 4n+1"
-        
+
         # Store the number of chunks for alignment with action/state
         num_video_chunks = (unique_sorted.size - 1) // 8
         if not hasattr(self, '_current_num_chunks'):
             self._current_num_chunks = {}
         # Use first_idx as a key to track the current sample's chunk count
         self._current_num_chunks[first_idx] = num_video_chunks
-        
+
         # print("unique_sorted size", unique_sorted.size, "num_video_chunks", num_video_chunks)
         return unique_sorted
 

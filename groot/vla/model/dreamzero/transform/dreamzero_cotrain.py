@@ -106,7 +106,7 @@ def collate(features: List[dict], tokenizer: AutoTokenizer, num_views=3, embodim
                     else:
                         # If it's already a scalar (string, float, int, etc.), convert to string
                         processed_item = str(parsed_item)
-                    
+
                     if num_views > 1 and elem["embodiment_id"] == embodiment_tag_mapping[EmbodimentTag.AGIBOT.value]:
                         processed_item = "A multi-view video shows that a robot " + processed_item.lower() + " The video is split into four views: The top-left view shows the camera view from the robot's head, the top-right view shows the camera view from the right hand, the bottom-left view shows the camera view from the left hand, and the bottom-right view is a black screen (inactive view). The robot " + processed_item.lower()
                     elif elem["embodiment_id"] == embodiment_tag_mapping[EmbodimentTag.OXE_DROID.value]:
@@ -125,8 +125,8 @@ def collate(features: List[dict], tokenizer: AutoTokenizer, num_views=3, embodim
                     elif elem["embodiment_id"] == embodiment_tag_mapping[EmbodimentTag.YAM.value]:
                         processed_item = "A multi-view video shows that a robot " + processed_item.lower() + " The video is split into four views: The top-left view shows the top camera, the top-right view shows the right camera, the bottom-left view shows the left camera, and the bottom-right view is a black screen. The robot " + processed_item.lower()
                     else:
-                        raise ValueError(f"Embodiment ID {elem['embodiment_id']} not supported.") 
-                    output_values.append(processed_item)  
+                        raise ValueError(f"Embodiment ID {elem['embodiment_id']} not supported.")
+                    output_values.append(processed_item)
                 except (ValueError, SyntaxError, TypeError):
                     # If parsing fails or item is already a string, use it directly
                     if num_views > 1 and elem["embodiment_id"] == embodiment_tag_mapping[EmbodimentTag.AGIBOT.value]:
@@ -139,7 +139,7 @@ def collate(features: List[dict], tokenizer: AutoTokenizer, num_views=3, embodim
                             + str(item).lower()
                         )
                     elif elem["embodiment_id"] == embodiment_tag_mapping[EmbodimentTag.GR1_UNIFIED.value]:
-                        item = "A single view video shows that a human " + str(item).lower() 
+                        item = "A single view video shows that a human " + str(item).lower()
                     elif elem["embodiment_id"] == embodiment_tag_mapping[EmbodimentTag.MECKA_HANDS.value]:
                         item = "A single view video shows that a human " + str(item).lower()
                     elif elem["embodiment_id"] == embodiment_tag_mapping[EmbodimentTag.XDOF.value]:
@@ -149,17 +149,19 @@ def collate(features: List[dict], tokenizer: AutoTokenizer, num_views=3, embodim
                     elif elem["embodiment_id"] == embodiment_tag_mapping[EmbodimentTag.ROBOCHALLENGE.value]:
                         # breakpoint()
                         item = "A multi-view video shows that a robot " + str(item).lower() + " The video is split into three views: The top-left view shows the top exterior camera, the top-right view shows the camera from the robot's wrist, the bottom-left view shows the right exterior camera, and the bottom-right view is a black screen. The robot " + str(item).lower()
+                    elif elem["embodiment_id"] == embodiment_tag_mapping[EmbodimentTag.SELFCOLLECT.value]:
+                        item = "A multi-view video shows that a robot " + str(item).lower() + " The video is split into three views: The top-left view shows the left exterior camera, the top-right view shows the right exterior camera, the bottom-left view shows the camera from the robot's wrist, and the bottom-right view is a black screen. The robot " + str(item).lower()
                     else:
-                        raise ValueError(f"Embodiment ID {elem['embodiment_id']} not supported.")   
+                        raise ValueError(f"Embodiment ID {elem['embodiment_id']} not supported.")
                     output_values.append(item)
             # print("output_values", output_values)
             ids, mask = tokenizer(output_values, return_mask=True, add_special_tokens=True)
-            batch[key] = ids 
+            batch[key] = ids
             batch['text_attention_mask'] = mask
         elif key == "text_negative":
             values = [elem[key] for elem in features]
             ids, mask = tokenizer(values, return_mask=True, add_special_tokens=True)
-            batch[key] = ids 
+            batch[key] = ids
             batch['text_attention_mask_negative'] = mask
         else:
             values = [elem[key] for elem in features]
@@ -225,16 +227,16 @@ class DreamTransform(InvertibleModalityTransform):
         description="Path to the tokenizer."
     )
     _tokenizer: Optional[HuggingfaceTokenizer] = PrivateAttr(default=None)
-    
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         # Initialize the tokenizer
         self._tokenizer = HuggingfaceTokenizer(
-            name=self.tokenizer_path, 
-            seq_len=self.max_length, 
+            name=self.tokenizer_path,
+            seq_len=self.max_length,
             clean='whitespace'
         )
-    
+
     @property
     def tokenizer(self):
         return self._tokenizer
@@ -317,7 +319,7 @@ class DreamTransform(InvertibleModalityTransform):
         )
         if images.shape[0] > 1:
             v, t, c, h, w = images.shape
-            
+
             # For DROID embodiment: 2x2 grid where the wrist view spans the full top row,
             # and the two exterior views occupy the bottom row.
             #
@@ -356,14 +358,14 @@ class DreamTransform(InvertibleModalityTransform):
                 concat_images[0, :, :, h:, w:] = right_exterior
 
                 return concat_images
-            
+
             # For other embodiments: use 2x2 grid layout
             # Layout: [head, right]
             #         [left, black]
-            
+
             # Create output tensor with doubled height and width
             concat_images = np.zeros((1, t, c, 2*h, 2*w), dtype=images.dtype)
-            
+
             # Place images in the 2x2 grid
             # Left upper: head image (view 0)
             if v > 0:
@@ -380,23 +382,23 @@ class DreamTransform(InvertibleModalityTransform):
             # Right bottom: black pixels (already zeros from initialization)
 
             return concat_images
-        
+
         return images
 
     def _prepare_language(self, data: dict):
         """Tokenize data['language'] (or default_instruction if missing)."""
         # Determine which language key to use
         selected_key = self._language_key
-        
+
         # For DROID embodiment during training, randomly select from available language keys
-        if (self._language_keys is not None and 
-            len(self._language_keys) > 1 and 
-            self.training and 
+        if (self._language_keys is not None and
+            len(self._language_keys) > 1 and
+            self.training and
             self.embodiment_tag == EmbodimentTag.OXE_DROID):
             selected_key = random.choice(self._language_keys)
         elif self._language_keys is not None and len(self._language_keys) > 0 and selected_key is None:
             selected_key = self._language_keys[0]
-        
+
         if selected_key is not None:
             raw_language = data[selected_key]
             if isinstance(raw_language, np.ndarray):
@@ -423,7 +425,7 @@ class DreamTransform(InvertibleModalityTransform):
             is_dream_instance = True
         else:
             is_dream_instance = False
-        
+
         if "<COTRAIN>" in raw_language:
             raw_language = raw_language.replace("<COTRAIN>", "")
             is_cotrain_instance = True
@@ -432,7 +434,7 @@ class DreamTransform(InvertibleModalityTransform):
 
         if self.always_use_default_instruction:
             raw_language = self.default_instruction
-        
+
         # print("raw_language", raw_language)
 
         # Formalize language
@@ -546,7 +548,7 @@ class DreamTransform(InvertibleModalityTransform):
 
         transformed_data["embodiment_id"] = self.get_embodiment_tag()
 
-        if self.embodiment_tag == EmbodimentTag.MECKA_HANDS: 
+        if self.embodiment_tag == EmbodimentTag.MECKA_HANDS:
             is_cotrain_instance = True
         else:
             is_cotrain_instance = False

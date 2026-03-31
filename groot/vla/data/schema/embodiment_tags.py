@@ -348,3 +348,4 @@ class EmbodimentTag(Enum):
     """
 
     ROBOCHALLENGE = "robochallenge"
+    SELFCOLLECT = "selfcollect"

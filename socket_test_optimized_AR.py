@@ -1,5 +1,6 @@
 import dataclasses
 import logging
+from re import L
 import socket
 import asyncio
 import os
@@ -36,6 +37,7 @@ class Args:
     port: int = 8000
     timeout_seconds: int = 50000  # 10 hours default, configurable
     model_path: str = "./checkpoints/dreamzero"
+    output_root: str | None = None  # If set, save videos under this directory instead of alongside model_path.
     enable_dit_cache: bool = False
     index: int = 0
     max_chunk_size: int | None = None  # If None, use config value. Otherwise override max_chunk_size for inference.
@@ -84,15 +86,105 @@ class ARDroidRoboarenaPolicy:
         if self._output_dir:
             os.makedirs(self._output_dir, exist_ok=True)
     
+    # def _convert_observation(self, obs: dict) -> dict:
+    #     """Convert roboarena observation format to AR_droid format.
+        
+    #     Roboarena format:
+    #         - observation/exterior_image_0_left: (H, W, 3) single frame
+    #         - observation/exterior_image_1_left: (H, W, 3) single frame
+    #         - observation/wrist_image_left: (H, W, 3) single frame
+    #         - observation/joint_position: (7,)
+    #         - observation/gripper_position: (1,)
+    #         - prompt: str
+        
+    #     AR_droid format:
+    #         - video.exterior_image_1_left: (T, H, W, 3) multi-frame
+    #         - video.exterior_image_2_left: (T, H, W, 3) multi-frame
+    #         - video.wrist_image_left: (T, H, W, 3) multi-frame
+    #         - state.joint_position: (1, 7)
+    #         - state.gripper_position: (1, 1)
+    #         - annotation.language.action_text: str
+    #     """
+    #     converted = {}
+        
+    #     # Map image keys (roboarena uses 0-indexed, AR_droid uses 1-indexed)
+    #     image_key_mapping = {
+    #         "observation/exterior_image_0_left": "video.exterior_image_1_left",
+    #         "observation/exterior_image_1_left": "video.exterior_image_2_left",
+    #         "observation/wrist_image_left": "video.wrist_image_left",
+    #     }
+        
+    #     # Accumulate frames for each camera view
+    #     for roboarena_key, droid_key in image_key_mapping.items():
+    #         if roboarena_key in obs:
+    #             data = obs[roboarena_key]
+    #             if isinstance(data, np.ndarray):
+    #                 if data.ndim == 4:
+    #                     # Multiple frames (T, H, W, 3)
+    #                     self._frame_buffers[droid_key].extend(list(data))
+    #                 else:
+    #                     # Single frame (H, W, 3)
+    #                     self._frame_buffers[droid_key].append(data)
+
+    #     # Determine how many frames to use
+    #     if self._is_first_call:
+    #         # First call: use only 1 frame
+    #         num_frames = 1
+    #     else:
+    #         # Subsequent calls: use exactly FRAMES_PER_CHUNK frames
+    #         num_frames = self.FRAMES_PER_CHUNK
+        
+    #     # Build video tensors from accumulated frames
+    #     for droid_key, buffer in self._frame_buffers.items():
+    #         if len(buffer) > 0:
+    #             if len(buffer) >= num_frames:
+    #                 # Take the last num_frames frames
+    #                 frames_to_use = buffer[-num_frames:]
+    #             else:
+    #                 # Pad by repeating the first frame to reach num_frames
+    #                 frames_to_use = buffer.copy()
+    #                 while len(frames_to_use) < num_frames:
+    #                     # Prepend the first frame to pad
+    #                     frames_to_use.insert(0, buffer[0])
+    #             # Stack to (T, H, W, C)
+    #             video = np.stack(frames_to_use, axis=0)
+    #             converted[droid_key] = video
+        
+    #     # Convert state observations
+    #     if "observation/joint_position" in obs:
+    #         joint_pos = obs["observation/joint_position"]
+    #         # Reshape to (1, 7) if needed
+    #         if joint_pos.ndim == 1:
+    #             joint_pos = joint_pos.reshape(1, -1)
+    #         converted["state.joint_position"] = joint_pos.astype(np.float64)
+    #     else:
+    #         converted["state.joint_position"] = np.zeros((1, 7), dtype=np.float64)
+        
+    #     if "observation/gripper_position" in obs:
+    #         gripper_pos = obs["observation/gripper_position"]
+    #         # Reshape to (1, 1) if needed
+    #         if gripper_pos.ndim == 1:
+    #             gripper_pos = gripper_pos.reshape(1, -1)
+    #         converted["state.gripper_position"] = gripper_pos.astype(np.float64)
+    #     else:
+    #         converted["state.gripper_position"] = np.zeros((1, 1), dtype=np.float64)
+        
+    #     # Convert prompt
+    #     if "prompt" in obs:
+    #         converted["annotation.language.action_text"] = obs["prompt"]
+    #     else:
+    #         converted["annotation.language.action_text"] = ""
+        
+    #     return converted
+
     def _convert_observation(self, obs: dict) -> dict:
         """Convert roboarena observation format to AR_droid format.
         
-        Roboarena format:
-            - observation/exterior_image_0_left: (H, W, 3) single frame
-            - observation/exterior_image_1_left: (H, W, 3) single frame
-            - observation/wrist_image_left: (H, W, 3) single frame
-            - observation/joint_position: (7,)
-            - observation/gripper_position: (1,)
+        robochallenge format:
+            - exterior_image_1_left: (H, W, 3) single frame
+            - exterior_image_1_left: (H, W, 3) single frame
+            - wrist_image_left: (H, W, 3) single frame
+            - state: (7,)
             - prompt: str
         
         AR_droid format:
@@ -103,15 +195,21 @@ class ARDroidRoboarenaPolicy:
             - state.gripper_position: (1, 1)
             - annotation.language.action_text: str
         """
+        import msgpack_numpy as legacy_msgpack_numpy
+        for k, v in obs.items():
+            try:
+                obs[k] = legacy_msgpack_numpy.decode(v)
+            except:
+                pass
         converted = {}
         
         # Map image keys (roboarena uses 0-indexed, AR_droid uses 1-indexed)
         image_key_mapping = {
-            "observation/exterior_image_0_left": "video.exterior_image_1_left",
-            "observation/exterior_image_1_left": "video.exterior_image_2_left",
-            "observation/wrist_image_left": "video.wrist_image_left",
+            "exterior_image_0_left": "video.exterior_image_1_left",
+            "exterior_image_1_left": "video.exterior_image_2_left",
+            "wrist_image_left": "video.wrist_image_left",
         }
-        
+
         # Accumulate frames for each camera view
         for roboarena_key, droid_key in image_key_mapping.items():
             if roboarena_key in obs:
@@ -147,31 +245,13 @@ class ARDroidRoboarenaPolicy:
                 # Stack to (T, H, W, C)
                 video = np.stack(frames_to_use, axis=0)
                 converted[droid_key] = video
+
+        converted["state.joint_position"] = obs["state"][:6].reshape(1, -1)
+        converted["state.gripper_position"] = obs["state"][6:7].reshape(1, -1)
+
+        converted["endpoint"] = "infer"
         
-        # Convert state observations
-        if "observation/joint_position" in obs:
-            joint_pos = obs["observation/joint_position"]
-            # Reshape to (1, 7) if needed
-            if joint_pos.ndim == 1:
-                joint_pos = joint_pos.reshape(1, -1)
-            converted["state.joint_position"] = joint_pos.astype(np.float64)
-        else:
-            converted["state.joint_position"] = np.zeros((1, 7), dtype=np.float64)
-        
-        if "observation/gripper_position" in obs:
-            gripper_pos = obs["observation/gripper_position"]
-            # Reshape to (1, 1) if needed
-            if gripper_pos.ndim == 1:
-                gripper_pos = gripper_pos.reshape(1, -1)
-            converted["state.gripper_position"] = gripper_pos.astype(np.float64)
-        else:
-            converted["state.gripper_position"] = np.zeros((1, 1), dtype=np.float64)
-        
-        # Convert prompt
-        if "prompt" in obs:
-            converted["annotation.language.action_text"] = obs["prompt"]
-        else:
-            converted["annotation.language.action_text"] = ""
+        converted["annotation.language.language_instruction"] = obs["prompt"]
         
         return converted
     
@@ -748,7 +828,9 @@ def main(args: Args) -> None:
     # to autoregressive nature of the model (several possible shapes).
     torch._dynamo.config.recompile_limit = 800
 
-    embodiment_tag = "oxe_droid"
+    # embodiment_tag = "oxe_droid"
+    embodiment_tag = "robochallenge" # TODO
+    print("# embodiment_tag: ", embodiment_tag)
     model_path = args.model_path
     policy_metadata = {
         "embodiment": embodiment_tag,
@@ -781,7 +863,11 @@ def main(args: Args) -> None:
         parent_dir = os.path.dirname(model_path)
         date_suffix = datetime.datetime.now().strftime("%Y%m%d")
         checkpoint_name = os.path.basename(model_path)
-        output_dir = os.path.join(parent_dir, f"real_world_eval_gen_{date_suffix}_{args.index}", checkpoint_name)
+        # Default: try to write next to checkpoints; fall back to a user-writable directory.
+        output_root = args.output_root
+        if output_root is None:
+            output_root = parent_dir if os.access(parent_dir, os.W_OK) else os.path.join(os.path.expanduser("~"), "dreamzero_outputs")
+        output_dir = os.path.join(output_root, f"real_world_eval_gen_{date_suffix}_{args.index}", checkpoint_name)
         os.makedirs(output_dir, exist_ok=True)
         logging.info("Videos will be saved to: %s", output_dir)
     else:
