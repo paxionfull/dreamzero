@@ -49,7 +49,11 @@ from groot.control.tensorrt_utils import (
 )
 
 # DreamZero-DROID uses the ar_14B_droid model type in tensorrt_utils.
-_MODEL_TYPE = "ar_14B_droid"
+# _MODEL_TYPE = "ar_14B_droid"
+# _MODEL_TYPE = "ar_5B_n6"
+_MODEL_TYPE = os.getenv("MODEL_TYPE", None)
+if _MODEL_TYPE is None:
+    raise ValueError("MODEL_TYPE is not set")
 
 
 def _init_single_gpu_mesh():
@@ -92,17 +96,59 @@ def _make_dataset_forward_loop(policy, dataset_path: str, num_calibration_trajs:
     """
     from groot.vla.data.dataset.lerobot import LeRobotSingleDataset
 
+    cfg = getattr(policy.trained_model.action_head, "config", None)
+    target_h = int(getattr(cfg, "target_video_height", 160) or 160)
+    target_w = int(getattr(cfg, "target_video_width", 320) or 320)
+    video_keys = (
+        "video.exterior_image_1_left",
+        "video.exterior_image_2_left",
+        "video.wrist_image_left",
+    )
+
+    def _resize_video_thwc(video: np.ndarray) -> np.ndarray:
+        """Resize video from THWC to target_h/target_w while preserving dtype."""
+        if not isinstance(video, np.ndarray) or video.ndim != 4:
+            return video
+        if video.shape[1] == target_h and video.shape[2] == target_w:
+            return video
+        dtype = video.dtype
+        video_t = torch.from_numpy(video).permute(0, 3, 1, 2).float()
+        video_t = torch.nn.functional.interpolate(
+            video_t,
+            size=(target_h, target_w),
+            mode="bilinear",
+            align_corners=False,
+        )
+        if np.issubdtype(dtype, np.integer):
+            video_t = video_t.round().clamp(0, 255)
+        return video_t.permute(0, 2, 3, 1).cpu().numpy().astype(dtype, copy=False)
+
     def forward_loop(model):
         logger.info(
             "Calibration: loading dataset from %s (%d trajs)", dataset_path, num_calibration_trajs
         )
+        # dataset = LeRobotSingleDataset(
+        #     dataset_path=dataset_path,
+        #     modality_configs=policy.modality_configs,
+        #     embodiment_tag=policy.embodiment_tag,
+        #     video_backend="torchvision_av",
+        #     video_backend_kwargs=None,
+        #     transforms=None,        # policy.lazy_joint_forward_causal applies transforms
+        #     use_global_metadata=False,
+        # )
+
+        # 1) 只保留校准必需模态，避免 language/task 读取报错
+        calib_modality_configs = {
+            k: v for k, v in policy.modality_configs.items()
+            if k in ("video", "state", "action")
+        }
         dataset = LeRobotSingleDataset(
             dataset_path=dataset_path,
-            modality_configs=policy.modality_configs,
-            embodiment_tag=policy.embodiment_tag,
-            video_backend="torchvision_av",
+            modality_configs=calib_modality_configs,
+            embodiment_tag=policy.embodiment_tag,   # 你这边应是 robochallenge
+            video_backend="decord",                 # 对齐训练配置
             video_backend_kwargs=None,
-            transforms=None,        # policy.lazy_joint_forward_causal applies transforms
+            transforms=None,
             use_global_metadata=False,
         )
 
@@ -126,6 +172,10 @@ def _make_dataset_forward_loop(policy, dataset_path: str, num_calibration_trajs:
                     for k, v in dataset.delta_indices.items()
                 }
                 data_point = dataset.get_step_data(traj_id, indices)
+                if "5B" in _MODEL_TYPE:
+                    for key in video_keys:
+                        if key in data_point:
+                            data_point[key] = _resize_video_thwc(data_point[key])
                 batch = Batch(obs=data_point)
 
                 dist.barrier()
@@ -203,7 +253,8 @@ def main():
     device_mesh = _init_single_gpu_mesh()
 
     policy = GrootSimPolicy(
-        embodiment_tag=EmbodimentTag("oxe_droid"),
+        # embodiment_tag=EmbodimentTag("oxe_droid"),
+        embodiment_tag=EmbodimentTag("robochallenge"),
         model_path=args.model_path,
         device="cuda" if torch.cuda.is_available() else "cpu",
         device_mesh=device_mesh,

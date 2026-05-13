@@ -1181,7 +1181,13 @@ class CausalWanAttentionBlock(nn.Module):
                 aligned.append(part[:, :L])
             else:
                 repeat = (L + L_e - 1) // L_e
-                aligned.append(part.repeat_interleave(repeat, dim=1)[:, :L])
+                # Avoid repeat_interleave in ONNX tracing: it may trigger CPU index tensors
+                # and cause device mismatch (index on CPU vs activations on CUDA).
+                expanded = part.unsqueeze(2).expand(
+                    part.shape[0], L_e, repeat, part.shape[2], part.shape[3]
+                )
+                expanded = expanded.reshape(part.shape[0], -1, part.shape[2], part.shape[3])
+                aligned.append(expanded[:, :L])
         e = tuple(aligned)
 
         # self-attention
@@ -1768,7 +1774,9 @@ class CausalWanModel(ModelMixin, ConfigMixin):
         # time embeddings: expand to exactly seq_len so e matches x (5B: frame_seqlen=50, 1 frame -> 50 tokens)
         if F <= seq_len:
             repeat = (seq_len + F - 1) // F
-            timestep = timestep.repeat_interleave(repeat, dim=1)[:, :seq_len]
+            # Avoid repeat_interleave during ONNX trace: it may create CPU index tensors
+            # and trigger device mismatch (index on CPU vs activations on CUDA).
+            timestep = timestep.unsqueeze(-1).expand(B, F, repeat).reshape(B, -1)[:, :seq_len]
         else:
             indices = torch.linspace(0, F - 1, seq_len, device=timestep.device, dtype=torch.long)
             timestep = timestep[:, indices]
@@ -1838,8 +1846,9 @@ class CausalWanModel(ModelMixin, ConfigMixin):
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
 
 
-        frame_seqlen = 880
-        seq_len = 2*frame_seqlen 
+        frame_seqlen = int(self.frame_seqlen)
+        # Match token length with current input frame count and model frame_seqlen.
+        seq_len = int(x.shape[2] * frame_seqlen)
         kv_cache_seq_len = kv_cache_packed.shape[3]
         current_start_frame =  kv_cache_seq_len // frame_seqlen
 
@@ -1878,8 +1887,9 @@ class CausalWanModel(ModelMixin, ConfigMixin):
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
 
 
-        frame_seqlen = 880
-        seq_len = 2*frame_seqlen 
+        frame_seqlen = int(self.frame_seqlen)
+        # Match token length with current input frame count and model frame_seqlen.
+        seq_len = int(x.shape[2] * frame_seqlen)
         kv_cache_seq_len = kv_cache_packed.shape[3]
         current_start_frame =  kv_cache_seq_len // frame_seqlen
 
@@ -2132,6 +2142,7 @@ class CausalWanModel(ModelMixin, ConfigMixin):
                 return outputs
             return custom_forward
 
+        self.gradient_checkpointing = False  # TODO
         for block in self.blocks:
             if torch.is_grad_enabled() and self.gradient_checkpointing:
                 x = torch.utils.checkpoint.checkpoint(

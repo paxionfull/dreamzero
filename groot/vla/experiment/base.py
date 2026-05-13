@@ -660,19 +660,26 @@ class BaseExperiment(ABC):
 
         val_dataset = self.create_val_dataset(cfg)
         data_collator = self.create_data_collator(cfg)
-        # ======================== Dataset ========================
 
+        total_frames = 0
+        for ds in train_dataset.datasets:
+            total_frames += ds.trajectory_lengths.sum()
+        print(f"Total frames: {total_frames}")
+
+        # ======================== Dataset ========================
         # from torch.utils.data import DataLoader
         # dl = DataLoader(
         #     train_dataset,
         #     batch_size=1,
         #     num_workers=0,           # 调试建议先用 0，方便看报错/print
         #     pin_memory=False,
+        #     collate_fn=data_collator,
         # )
         # gn = iter(dl)
-        # batch = next(gn)
         # from IPython import embed; embed()
+        # batch = next(gn)
         # exit(0)
+        # ======================== Dataset ========================
 
         # ======================== Model ========================
         # Check if we are resuming training.

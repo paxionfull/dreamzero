@@ -792,7 +792,8 @@ class WANPolicyHead(ActionHead):
                 action_loss_per_sample = torch.nn.functional.mse_loss(
                     action_noise_pred.float(), training_target_action.float(), reduction='none'
                 ) * action_mask  # shape: [B, ...]
-                action_loss_per_sample = has_real_action[:, None].float() * action_loss_per_sample  # apply has_real_action
+                # action_loss_per_sample = has_real_action[:, None].float() * action_loss_per_sample  # apply has_real_action
+                action_loss_per_sample = has_real_action[:, None, None].float() * action_loss_per_sample  # apply has_real_action
                 weight_action = action_loss_per_sample.mean(dim=2) * self.scheduler.training_weight(
                     timestep_action.flatten(0, 1),
                 ).unflatten(0, (noise_action.shape[0], noise_action.shape[1])).to(self._device)
@@ -1358,6 +1359,7 @@ class WANPolicyHead(ActionHead):
         import os
         ENABLE_TENSORRT = os.getenv("ENABLE_TENSORRT", "False").lower() == "true"
         LOAD_TRT_ENGINE = os.getenv("LOAD_TRT_ENGINE", None)
+        model_type = os.getenv("MODEL_TYPE", None)
 
         # Torch compile the modules. Skip _forward_blocks: Dynamo with fullgraph can fail on
         # shape variation (e.g. x [1,50,C] vs e [1,200,C]); the block aligns e to x at runtime.
@@ -1381,7 +1383,8 @@ class WANPolicyHead(ActionHead):
             print(f"Loading TRT engine from {LOAD_TRT_ENGINE}")
             import groot.control.tensorrt_utils as trt_utils
             model_path = LOAD_TRT_ENGINE
-            self.trt_engine = trt_utils.load_tensorrt_engine(model_path, model_type="ar_14B")
+            # self.trt_engine = trt_utils.load_tensorrt_engine(model_path, model_type="ar_14B")
+            self.trt_engine = trt_utils.load_tensorrt_engine(model_path, model_type=model_type)
 
     def parallelize(self, device_mesh: DeviceMesh) -> None:
         ip_mesh = device_mesh["ip"]

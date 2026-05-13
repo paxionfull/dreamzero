@@ -110,7 +110,7 @@ def wan_trt_quantize_and_load_engine(
             forward_loop=forward_loop,
         )
 
-    if  cfg.inference_mode == "trt_build":
+    if cfg.inference_mode == "trt_build":
         policy.trained_model.action_head.model.to(torch.float16)
 
         print("Export model:", policy.trained_model.action_head.model)
@@ -142,9 +142,10 @@ def wan_trt_quantize_and_load_engine(
             dynamic_axes = {
                 "kv_cache_packed": {3: "kv_cache_len"},
             }
-            min_shape = "kv_cache_packed:30x2x1x220x24x128"
-            max_shape = "kv_cache_packed:30x2x1x3080x24x128"
-            opt_shape = "kv_cache_packed:30x2x1x2860x24x128"
+            # For WAN2.2 5B (frame_seqlen=50): cache length profile uses 1x/14x/13x frame_seqlen.
+            min_shape = "kv_cache_packed:30x2x1x50x24x128"
+            max_shape = "kv_cache_packed:30x2x1x700x24x128"
+            opt_shape = "kv_cache_packed:30x2x1x650x24x128"
         else:
             dynamic_axes = None
 
@@ -196,6 +197,8 @@ def export_to_onnx(
     #
     if model_type == "5B":
         return export_to_onnx_5B(pytorch_model, test_inputs, onnx_path, dynamic_axes)
+    elif model_type in ("ar_5B_n6", "ar_5B"):
+        return export_to_onnx_ar_5B(pytorch_model, test_inputs, onnx_path, dynamic_axes)
     elif model_type == "14B":
         return export_to_onnx_14B(pytorch_model, test_inputs, onnx_path, dynamic_axes)
     elif model_type == "ar_14B" or model_type == "ar_14B_droid":
@@ -234,7 +237,8 @@ def export_to_onnx_ar_14B(pytorch_model, test_inputs, onnx_path="tensorrt/wan_mo
                 onnx_path,
                 export_params=True,
                 opset_version=20,
-                do_constant_folding=True,
+                # do_constant_folding=True,
+                do_constant_folding=False,
                 input_names=input_names,
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
@@ -251,7 +255,7 @@ def export_to_onnx_ar_14B(pytorch_model, test_inputs, onnx_path="tensorrt/wan_mo
 
 
 
-def export_to_onnx_5B(pytorch_model, test_inputs, onnx_path="tensorrt/wan_model.onnx"):
+def export_to_onnx_5B(pytorch_model, test_inputs, onnx_path="tensorrt/wan_model.onnx", dynamic_axes=None):
     """Export PyTorch model to ONNX"""
     print("Exporting model to ONNX...")
 
@@ -277,6 +281,7 @@ def export_to_onnx_5B(pytorch_model, test_inputs, onnx_path="tensorrt/wan_model.
                 do_constant_folding=True,
                 input_names=input_names,
                 output_names=output_names,
+                dynamic_axes=dynamic_axes,
             )
         print(f"  ONNX model exported to: {onnx_path}")
         return onnx_path
@@ -289,7 +294,64 @@ def export_to_onnx_5B(pytorch_model, test_inputs, onnx_path="tensorrt/wan_model.
         return None
 
 
-def export_to_onnx_14B(pytorch_model, test_inputs, onnx_path="tensorrt/wan_model.onnx"):
+def export_to_onnx_ar_5B(pytorch_model, test_inputs, onnx_path="tensorrt/wan_model.onnx", dynamic_axes=None):
+    """Export AR 5B PyTorch model to ONNX."""
+    print("Exporting AR 5B model to ONNX...", onnx_path)
+
+    os.makedirs(os.path.dirname(onnx_path), exist_ok=True)
+    pytorch_model.eval()
+    pytorch_model.to(torch.float16)
+
+    x, timestep, context, kv_cache_packed, y, clip_feature, action, timestep_action, state = test_inputs
+
+    input_names = [
+        "x",
+        "timestep",
+        "context",
+        "kv_cache_packed",
+        "y",
+        "clip_feature",
+        "action",
+        "timestep_action",
+        "state",
+    ]
+    output_names = ["video_noise_pred", "action_noise_pred"]
+
+    try:
+        with torch.no_grad():
+            torch.onnx.export(
+                pytorch_model,
+                (
+                    x,
+                    timestep,
+                    context,
+                    kv_cache_packed,
+                    y,
+                    clip_feature,
+                    action,
+                    timestep_action,
+                    state,
+                ),
+                onnx_path,
+                export_params=True,
+                opset_version=20,
+                do_constant_folding=False,
+                input_names=input_names,
+                output_names=output_names,
+                dynamic_axes=dynamic_axes,
+            )
+        print(f"  ONNX model exported to: {onnx_path}")
+        return onnx_path
+
+    except Exception as e:
+        import traceback
+        print(f"  ERROR: ONNX export failed. Exception type: {type(e)}")
+        print("Traceback:")
+        traceback.print_exc()
+        return None
+
+
+def export_to_onnx_14B(pytorch_model, test_inputs, onnx_path="tensorrt/wan_model.onnx", dynamic_axes=None):
     """Export PyTorch model to ONNX"""
     print("Exporting model to ONNX...")
 
@@ -324,6 +386,7 @@ def export_to_onnx_14B(pytorch_model, test_inputs, onnx_path="tensorrt/wan_model
                 do_constant_folding=True,
                 input_names=input_names,
                 output_names=output_names,
+                dynamic_axes=dynamic_axes,
             )
         print(f"  ONNX model exported to: {onnx_path}")
         return onnx_path
@@ -638,6 +701,7 @@ class WanTrtModelAr5B(torch.nn.Module):
         context,
         kv_cache: list[torch.Tensor],
         y=None,
+        clip_feature=None,
         action=None,
         timestep_action=None,
         state=None,
@@ -649,7 +713,7 @@ class WanTrtModelAr5B(torch.nn.Module):
         self.engine.set_runtime_tensor_shape("timestep", timestep.shape)
         self.engine.set_runtime_tensor_shape("context", context.shape)
         self.engine.set_runtime_tensor_shape("kv_cache_packed", kv_cache_packed.shape)
-        # self.engine.set_runtime_tensor_shape("y", y.shape)
+        self.engine.set_runtime_tensor_shape("clip_feature", clip_feature.shape)
         self.engine.set_runtime_tensor_shape("action", action.shape)
         self.engine.set_runtime_tensor_shape("timestep_action", timestep_action.shape)
         self.engine.set_runtime_tensor_shape("state", state.shape)
@@ -660,7 +724,7 @@ class WanTrtModelAr5B(torch.nn.Module):
             timestep.to(torch.float16),
             context.to(torch.float16),
             kv_cache_packed.to(torch.float16),
-            # y.to(torch.float16),
+            clip_feature.to(torch.float16),
             action.to(torch.float16),
             timestep_action.to(torch.float16),
             state.to(torch.float16),
@@ -753,13 +817,37 @@ def create_wan_test_inputs(policy, device="cuda", model_type="5B"):
     elif model_type == "ar_5B_n6":
         # ar_5B_n6 uses _forward_inference_trt which requires kv_cache_packed
         # Shape from dynamic_axes: kv_cache_packed:30x2x1x220x24x128
-        # Note: 5B model doesn't use clip_feature (unlike 14B), but still needs y
-        x = torch.randn(1, 48, 2, 22, 40, dtype=dtype, device=device)
+        # Keep dummy input lengths aligned with the loaded checkpoint config.
+        action_horizon = 24
+        model_frame_seqlen = None
+        model_num_layers = None
+        model_num_heads = None
+        model_head_dim = None
+        model_num_frame_per_block = None
+        if policy is not None and hasattr(policy, "trained_model"):
+            action_horizon = int(
+                getattr(policy.trained_model.action_head, "action_horizon", action_horizon)
+            )
+            dit_model = policy.trained_model.action_head.model
+            model_frame_seqlen = getattr(dit_model, "frame_seqlen", None)
+            model_num_layers = len(getattr(dit_model, "blocks", []))
+            model_num_heads = getattr(dit_model, "num_heads", None)
+            if model_num_heads is not None:
+                # dim is expected to be divisible by num_heads.
+                model_dim = getattr(dit_model, "dim", None)
+                if model_dim is not None:
+                    model_head_dim = int(model_dim) // int(model_num_heads)
+            model_num_frame_per_block = getattr(policy.trained_model.action_head, "num_frame_per_block", None)
+
+        # Note: 5B model doesn't semantically use clip_feature (unlike 14B), but
+        # we keep the same forward signature as _forward_inference_trt for export.
+        x = torch.randn(1, 48, 2, 10, 20, dtype=dtype, device=device)
         timestep = torch.randn(1, 2, dtype=dtype, device=device)
         context = torch.randn(1, 512, 4096, dtype=dtype, device=device)
-        # y = torch.randn(1, 52, 2, 22, 40, dtype=dtype, device=device)  # y is required by _forward_inference_trt
-        action = torch.randn(1, 48, 32, dtype=dtype, device=device)
-        timestep_action = torch.randn(1, 48, dtype=dtype, device=device)
+        y = torch.randn(1, 52, 2, 10, 20, dtype=dtype, device=device)
+        clip_feature = torch.randn(1, 257, 1280, dtype=dtype, device=device)
+        action = torch.randn(1, action_horizon, 32, dtype=dtype, device=device)
+        timestep_action = torch.randn(1, action_horizon, dtype=dtype, device=device)
         state = torch.randn(1, 1, 64, dtype=dtype, device=device)
     
         num_heads = 24
@@ -770,12 +858,51 @@ def create_wan_test_inputs(policy, device="cuda", model_type="5B"):
         kv_cache = []
         for _ in range(num_layers):
             kv_cache.append(
-                torch.zeros([2, B, 13*220, num_heads, head_dim], dtype=dtype, device=device)
+                torch.zeros([2, B, 13*50, num_heads, head_dim], dtype=dtype, device=device)
             )
     
         kv_cache_packed = torch.stack(kv_cache, dim=0)
-        # Return order matches _forward_inference_trt signature: x, timestep, context, kv_cache_packed, y, action, timestep_action, state
-        return (x, timestep, context, kv_cache_packed, action, timestep_action, state)
+        print("[TRT-DEBUG][ar_5B_n6] -------- Model/Config --------")
+        print(
+            "[TRT-DEBUG][ar_5B_n6] model frame_seqlen:",
+            model_frame_seqlen,
+            " action_horizon:",
+            action_horizon,
+            " num_frame_per_block:",
+            model_num_frame_per_block,
+            " model_num_layers:",
+            model_num_layers,
+            " model_num_heads:",
+            model_num_heads,
+            " model_head_dim:",
+            model_head_dim,
+        )
+        print("[TRT-DEBUG][ar_5B_n6] -------- Dummy Input Shapes --------")
+        print(
+            "[TRT-DEBUG][ar_5B_n6] x:",
+            tuple(x.shape),
+            " y:",
+            tuple(y.shape),
+            " context:",
+            tuple(context.shape),
+        )
+        print(
+            "[TRT-DEBUG][ar_5B_n6] action:",
+            tuple(action.shape),
+            " timestep_action:",
+            tuple(timestep_action.shape),
+            " state:",
+            tuple(state.shape),
+        )
+        print(
+            "[TRT-DEBUG][ar_5B_n6] kv_cache_packed:",
+            tuple(kv_cache_packed.shape),
+            " kv_cache_len:",
+            int(kv_cache_packed.shape[3]),
+        )
+        # Return order matches _forward_inference_trt signature:
+        # x, timestep, context, kv_cache_packed, y, clip_feature, action, timestep_action, state
+        return (x, timestep, context, kv_cache_packed, y, clip_feature, action, timestep_action, state)
     elif model_type == "14B":
         x = torch.randn(1, 16, 13, 44, 80, dtype=dtype, device=device)
         action = torch.randn(1, 48, 32, dtype=dtype, device=device)
