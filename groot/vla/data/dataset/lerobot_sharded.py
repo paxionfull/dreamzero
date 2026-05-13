@@ -491,8 +491,8 @@ class ShardedLeRobotSubLangSingleActionChunkDatasetDROID(LeRobotSingleDataset):
                 assert key.startswith("video."), f"Video key must start with 'video.', got {key}"
                 if key not in cached_frames:
                     cached_frames[key] = []
-                # try:
-                if False:  # TODO
+                try:
+                # if False:  # TODO
                     frames = get_frames_by_timestamps(
                         video_paths[trajectory_id][key].as_posix(),
                         timestamps=parquet_timestamps,
@@ -501,8 +501,8 @@ class ShardedLeRobotSubLangSingleActionChunkDatasetDROID(LeRobotSingleDataset):
                         fps=fps,
                     )
                     cached_frames[key].append(frames)
-                # except Exception:
-                else:
+                except Exception:
+                # else:
                     # 回退路径：从 parquet 中的 PNG bytes 解码并缓存
                     # print("直接从parquet中读取帧")
                     frame_key = video_paths[trajectory_id][key].as_posix().split("/")[-2]
