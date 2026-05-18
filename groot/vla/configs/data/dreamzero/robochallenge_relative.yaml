@@ -12,7 +12,7 @@ relative_action_keys:
   - joint_position
 max_chunk_size: 5
 # Use 10% of data in shards before moving to next shard
-dataset_shard_sampling_rate: 1.0 # TODO
+dataset_shard_sampling_rate: 0.1 # TODO
 mixture_dataset_cls: groot.vla.data.dataset.lerobot_sharded.ShardedLeRobotMixtureDataset.from_mixture_spec
 single_dataset_cls: groot.vla.data.dataset.lerobot_sharded.ShardedLeRobotSubLangSingleActionChunkDatasetDROID
 
